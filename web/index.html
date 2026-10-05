@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predictive Maintenance &amp; Remaining Useful Life</title>
+<link rel="stylesheet" href="kit.css">
+</head>
+<body>
+<header class="top">
+  <h1>Predictive Maintenance &amp; Remaining Useful Life</h1>
+  <span class="sub">A simulated plant with twelve machines. One bearing is wearing out: see it, time it, and fix it when the line is stopped anyway.</span>
+  <span class="mode">…</span>
+  <button class="primary" id="runall">Run all steps</button>
+</header>
+<main>
+  <nav class="steps"></nav>
+  <div>
+    <div id="steps"></div>
+    <section class="step" id="roi"><div class="head"><div class="grow"><h2>What is it worth?</h2>
+      <p>Per-plan figures come from the schedule above (run step 5 first). The number of such situations a year is an assumption: change it.</p></div></div>
+      <div class="out"><div class="card roi" id="roibox"><span class="mute">Run step 5 to load the figures.</span></div></div></section>
+  </div>
+</main>
+<footer>The machines, their vibration and their failures are simulated. No real equipment data is used.</footer>
+<script src="kit.js"></script>
+<script>
+const mode = m => m ? m.replace(/_/g, ' ') : '–', H = v => fmt.n(v) + ' h';
+const healthCard = (h, title) => card(title, kpis([{ label: 'Health score', value: `<span style="color:${h.anomalous ? 'var(--bad)' : 'var(--good)'}">${fmt.n(h.score, 1)}</span>`, sub: 'alarm above ' + fmt.n(h.threshold, 1) },
+    { label: 'State', value: h.anomalous ? badge('outside healthy range', 'bad') : badge('healthy', 'good') }, { label: 'Hours since overhaul', value: fmt.n(h.hours_since_overhaul) },
+    { label: 'Alert', value: h.alerts[0] ? badge(h.alerts[0].status, h.alerts[0].status === 'open' ? 'bad' : h.alerts[0].status === 'closed' ? 'good' : 'warn') : '–', sub: h.alerts[0] ? 'opened ' + fmt.date(h.alerts[0].opened_at) : '' }])
+  + lineChart([{ name: 'distance from the healthy range', points: h.series.hours.map((x, i) => [x, h.series.score[i]]), color: PALETTE[3] }, { name: 'alarm threshold', points: [[h.series.hours[0], h.threshold], [h.series.hours.at(-1), h.threshold]], color: '#6b6b78', dash: 1 }],
+      { h: 200, xfmt: v => Math.round(v) + ' h', ymin: 0 }));
+const R = {
+  run: j => { const s = j.result; return kpis([{ label: 'Plant time simulated', value: s.hours / 24 + ' days' }, { label: 'Waveform windows stored', value: fmt.n(s.windows_stored), sub: fmt.n(s.samples) + ' samples' }, { label: 'New alerts', value: s.new_alerts },
+      { label: 'Failures in service', value: s.failed_in_service.length }, { label: 'Pipeline', value: `<span style="font-size:15px">${esc(s.feature_set)}</span>`, sub: s.models + ' · job ' + j.status }]); },
+  spec: s => { const [a, b] = s.windows; return kpis([{ label: 'Bearing defect frequency', value: b.bpfo_hz + ' Hz', sub: '3.58 × shaft speed ' + b.shaft_hz + ' Hz' }, { label: 'Envelope line at that frequency', value: `<span style="color:var(--bad)">${fmt.n(s.bpfo_growth, 0)}×</span>`, sub: `${a.bpfo_amplitude} g → ${b.bpfo_amplitude} g` },
+      { label: 'Overall vibration (RMS)', value: fmt.n(b.features.rms / a.features.rms, 1) + '×', sub: 'the plain level barely doubled' }, { label: 'Kurtosis', value: `${fmt.n(a.features.kurtosis, 1)} → ${fmt.n(b.features.kurtosis, 1)}`, sub: 'impacts make the signal spiky' }])
+    + card(`Envelope spectrum (${s.envelope_band_hz.join(' to ')} Hz band demodulated) · ${s.resolution_hz} Hz resolution`, lineChart([{ name: 'latest window', points: b.envelope.hz.map((x, i) => [x, b.envelope.amplitude[i]]), color: PALETTE[3] },
+        { name: 'healthy reference', points: a.envelope.hz.map((x, i) => [x, a.envelope.amplitude[i]]), color: PALETTE[1] }], { h: 230, xfmt: v => Math.round(v) + ' Hz', yfmt: v => fmt.n(v, 2) + ' g', ymin: 0,
+        marks: [{ x: b.bpfo_hz, label: 'defect frequency' }, { x: 2 * b.bpfo_hz, label: '2×' }, { x: 3 * b.bpfo_hz, label: '3×' }] })); },
+  health: h => healthCard(h, `${h.name}: health score · ${h.model_version}`),
+  ack: a => `<div class="small mute" style="margin-bottom:10px">${badge(a.status, 'warn')} by ${esc(a.acknowledged_by)}: “${esc(a.message)}”</div>`,
+  rul: r => kpis([{ label: 'Remaining life, median', value: H(r.hours_p50), sub: fmt.n(r.hours_p50 / 24, 1) + ' days' }, { label: '80% band', value: `${fmt.n(r.hours_p10)} to ${H(r.hours_p90)}`, sub: `held ${fmt.pct(r.interval.held_out_coverage, 1)} of the time on unseen machines` },
+      { label: 'Likely failure mode', value: `<span style="font-size:15px">${esc(mode(r.failure_mode))}</span>` }, { label: 'Model', value: `<span style="font-size:15px">${esc(r.model_version)}</span>`, sub: 'band widened by ' + r.interval.conformal_adjustment_h + ' h at calibration' }])
+    + card('Remaining-life prediction over the machine\'s life (capped at 600 h: the model does not look further)', lineChart([{ name: 'median', points: r.history.hours.map((x, i) => [x, r.history.p50[i]]) }],
+        { h: 220, xfmt: v => Math.round(v) + ' h', yfmt: H, ymin: 0, bands: [{ lo: r.history.hours.map((x, i) => [x, r.history.p10[i]]), hi: r.history.hours.map((x, i) => [x, r.history.p90[i]]) }] })
+      + '<div class="small mute">Shaded: 10th to 90th percentile.</div>'),
+  _step3: Object.assign(r => { const i = r.rul.if_ignored; return card(`If ${r.rul.name} is left alone`, kpis([{ label: 'Fails within 3 / 7 / 14 days', value: `${fmt.pct(i.probability_of_failure_within_days[3])} / ${fmt.pct(i.probability_of_failure_within_days[7])} / ${fmt.pct(i.probability_of_failure_within_days[14])}` },
+      { label: 'Cost of an unplanned failure', value: fmt.usd(i.unplanned_failure_cost), sub: i.unplanned_downtime_h + ' h of lost production + emergency parts and labour' }, { label: 'Expected loss, next 14 days', value: `<span style="color:var(--bad)">${fmt.usd(i.expected_loss_14_days)}</span>` },
+      { label: 'Planned repair', value: fmt.usd(i.planned_repair_cost_line_stopped), sub: fmt.usd(i.planned_repair_cost_line_running) + ' if the line has to stop for it' }])); }, { first: true }),
+  fleet: f => card('Fleet, shortest remaining life first', table([{ k: 'name', label: 'Machine' }, { k: 'anomalous', label: 'Health', f: v => v ? badge('alarm', 'bad') : badge('ok', 'good') }, { k: 'failure_mode', label: 'Signature', f: v => esc(mode(v)) },
+    { k: 'rul_p50_h', label: 'Remaining life', num: 1, f: (v, r) => v >= 580 ? '<span class="mute">over 600 h</span>' : `<b>${H(v)}</b> <span class="mute small">(${r.rul_p10_h} to ${r.rul_p90_h})</span>` }], f.items)),
+  plan: p => card(`Maintenance schedule · ${p.solver.name} · ${p.solver.status} · ${p.assets_at_risk} of ${p.assets_monitored} machines at risk`, table([{ k: 'asset', label: 'Machine' },
+      { k: 'window', label: 'Slot', f: w => w ? `${esc(w.label)}<br><span class="mute small">${fmt.time(w.start_at)}</span>` : '<span class="mute">not in this horizon</span>' },
+      { k: 'p_fail_before', label: 'Fails first', num: 1, f: v => fmt.pct(v, 1) }, { k: 'planned', label: 'Planned work', num: 1, f: v => fmt.usd(v) }, { k: 'life_wasted', label: 'Life given up', num: 1, f: v => fmt.usd(v) },
+      { k: 'expected', label: 'Expected cost', num: 1, f: v => `<b>${fmt.usd(v)}</b>` }], p.schedule))
+    + card('Against two simple policies (expected cost over the horizon)', barChart(p.comparison.map((c, i) => ({ label: { optimized: 'Optimized schedule', run_to_failure: 'Run to failure', fix_at_first_opening: 'Fix at the first opening' }[c.policy], value: c.total_expected_cost,
+        color: ['#3fb97a', '#ef6a6a', '#e0a63c'][i], note: c.jobs_scheduled + ' jobs' })), { fmt: v => fmt.usd(v) })),
+  done: d => card(`Work order ${d.external_id} completed`, `${badge('found: ' + mode(d.failure_mode_found), 'info')} ${badge('model said: ' + mode(d.model_said), d.model_was_right ? 'good' : 'bad')} Label stored for retraining (${d.labels_for_asset} for this machine).
+      <blockquote>${esc(demo.scenario.steps[5].calls[1].body.notes)}</blockquote>`),
+  health2: h => healthCard(h, 'Three days after the repair: a new baseline'),
+  audit: a => card(`Audit log · hash chain ${a.chain_valid ? 'verifies' : 'BROKEN'}`, table([{ k: 'at', label: 'When', f: fmt.time }, { k: 'action', label: 'Action', f: v => `<span class="mono">${esc(v)}</span>` },
+    { k: 'detail', label: 'Detail', f: d => `<span class="small">${esc(Object.entries(d).filter(([, v]) => typeof v !== 'object').map(([k, v]) => `${k}: ${v}`).join(' · ').slice(0, 130))}</span>` }], a.events.slice().reverse())),
+  _after: (i, r) => { if (i === 4) roi(r); },
+};
+function roi(r) {
+  const c = Object.fromEntries(r.plan.comparison.map(x => [x.policy, x.total_expected_cost])), box = document.querySelector('#roibox');
+  box.innerHTML = `<div class="grid2"><div>
+    <label>Expected cost, run to failure (from the plan) <input type="number" id="r_a" value="${Math.round(c.run_to_failure)}"></label>
+    <label>Expected cost, fix at the first opening <input type="number" id="r_b" value="${Math.round(c.fix_at_first_opening)}"></label>
+    <label>Expected cost, optimized schedule <input type="number" id="r_c" value="${Math.round(c.optimized)}"></label>
+    <label>Situations like this per plant per year (assumption) <input type="number" id="r_n" value="6"></label></div><div id="r_out"></div></div>`;
+  const calc = () => { const g = id => +document.querySelector(id).value;
+    document.querySelector('#r_out').innerHTML = kpis([{ label: 'Saved a year vs run to failure', value: fmt.usd(g('#r_n') * (g('#r_a') - g('#r_c'))) }, { label: 'Saved a year vs fixing at once', value: fmt.usd(g('#r_n') * (g('#r_b') - g('#r_c'))) }]); };
+  box.oninput = calc; calc();
+}
+const demo = new Demo(R); demo.init();
+</script>
+</body>
+</html>

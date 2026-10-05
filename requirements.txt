@@ -1,0 +1,8 @@
+fastapi==0.142.2
+uvicorn==0.54.0
+psycopg[binary,pool]==3.3.6
+numpy==2.5.3
+scipy==1.18.1
+scikit-learn==1.9.1
+ortools==9.15.6755
+httpx==0.28.1

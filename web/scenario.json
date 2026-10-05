@@ -1,0 +1,142 @@
+{
+ "service": "predictive-maintenance-rul",
+ "run": "demo-1",
+ "tokens": {
+  "technician": "acme-technician-demo",
+  "planner": "acme-planner-demo",
+  "admin": "acme-admin-demo"
+ },
+ "steps": [
+  {
+   "title": "Stream telemetry while a bearing wears",
+   "say": "The simulated plant runs for 20 days. Every machine sends half a second of vibration every six hours; each window is turned into features and scored as it arrives. One conveyor motor's outer bearing race is slowly failing.",
+   "calls": [
+    {
+     "key": "a",
+     "as": "technician",
+     "method": "GET",
+     "path": "/v1/assets?name=Line+2+conveyor+drive+motor+M-207"
+    },
+    {
+     "key": "run",
+     "as": "technician",
+     "method": "POST",
+     "path": "/v1/simulator:run",
+     "body": {
+      "hours": 480
+     }
+    }
+   ]
+  },
+  {
+   "title": "A spectral peak emerges and the anomaly score rises",
+   "say": "Each time a ball passes the damaged spot it rings the housing. Demodulating that ringing shows a line at the bearing's defect frequency that was not there when the machine was healthy. The health score leaves its normal range and an alert opens.",
+   "calls": [
+    {
+     "key": "spec",
+     "as": "technician",
+     "method": "GET",
+     "path": "/v1/assets/{{a.items.0.id}}/spectrum"
+    },
+    {
+     "key": "health",
+     "as": "technician",
+     "method": "GET",
+     "path": "/v1/assets/{{a.items.0.id}}/health"
+    },
+    {
+     "key": "ack",
+     "as": "technician",
+     "method": "POST",
+     "path": "/v1/alerts/{{health.alerts.0.id}}:ack"
+    }
+   ]
+  },
+  {
+   "title": "Predict remaining useful life, with a band",
+   "say": "Three models give the 10th, 50th and 90th percentile of the hours left. The band is calibrated on machines the models never saw, so that it holds about 80% of the time.",
+   "calls": [
+    {
+     "key": "rul",
+     "as": "planner",
+     "method": "GET",
+     "path": "/v1/assets/{{a.items.0.id}}/rul"
+    }
+   ]
+  },
+  {
+   "title": "What it costs to ignore it",
+   "say": "Turning the prediction into money: the chance the motor fails in the next 3, 7 and 14 days, what an unplanned stop costs, and the rest of the fleet for context.",
+   "calls": [
+    {
+     "key": "fleet",
+     "as": "planner",
+     "method": "GET",
+     "path": "/v1/assets"
+    }
+   ]
+  },
+  {
+   "title": "Schedule the repairs",
+   "say": "An exact solver assigns each at-risk machine to a maintenance slot or leaves it, weighing failure risk against lost production, technician capacity, spare-part lead time and the life thrown away by going early. A changeover on days 5 and 6 stops the line anyway.",
+   "calls": [
+    {
+     "key": "plan",
+     "as": "planner",
+     "method": "POST",
+     "path": "/v1/maintenance:optimize",
+     "body": {
+      "horizon_days": 14
+     }
+    }
+   ]
+  },
+  {
+   "title": "Do the work, reset the health, keep the label",
+   "say": "The technician replaces the bearing and records what was found. That confirmation becomes a training label, the machine starts a new baseline, and three days later its health score is back in the normal range.",
+   "calls": [
+    {
+     "key": "wo",
+     "as": "planner",
+     "method": "POST",
+     "path": "/v1/work-orders",
+     "body": {
+      "asset_id": "{{a.items.0.id}}",
+      "work_type": "bearing_replacement"
+     }
+    },
+    {
+     "key": "done",
+     "as": "technician",
+     "method": "POST",
+     "path": "/v1/work-orders/{{wo.id}}:complete",
+     "body": {
+      "failure_mode_found": "outer_race",
+      "notes": "Spalling on the outer race at the load zone. Bearing replaced, grease renewed."
+     }
+    },
+    {
+     "key": "run2",
+     "as": "technician",
+     "method": "POST",
+     "path": "/v1/simulator:run",
+     "body": {
+      "hours": 72
+     }
+    },
+    {
+     "key": "health2",
+     "as": "technician",
+     "method": "GET",
+     "path": "/v1/assets/{{a.items.0.id}}/health"
+    },
+    {
+     "key": "audit",
+     "as": "admin",
+     "method": "GET",
+     "path": "/v1/audit?limit=8"
+    }
+   ]
+  }
+ ]
+}

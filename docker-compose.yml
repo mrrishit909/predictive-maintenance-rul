@@ -1,0 +1,38 @@
+# docker compose up --build        -> migrates, seeds, serves API + UI on http://localhost:8106/ui/ with one worker
+# docker compose run --rm test     -> the test suite against a throwaway database
+x-env: &env
+  DATABASE_URL: postgresql://app:${POSTGRES_PASSWORD:-app-dev-only}@db/app
+
+services:
+  db:
+    image: postgres:16
+    environment: {POSTGRES_USER: app, POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-app-dev-only}", POSTGRES_DB: app}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    ports: ["127.0.0.1:55106:5432"]      # localhost only, for running tests from the host
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U app"], interval: 2s, retries: 30}
+
+  api:
+    build: .
+    command: sh -c "python -m pm.seed --if-empty && exec uvicorn pm.api:app --host 0.0.0.0 --port 8000"
+    environment: *env
+    ports: ["8106:8000"]
+    depends_on: {db: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 3s
+      retries: 60
+
+  worker:
+    build: .
+    command: python -m core.jobs pm.api
+    environment: *env
+    depends_on: {api: {condition: service_healthy}}
+
+  test:
+    build: {context: ., target: test}
+    profiles: [test]
+    environment: *env
+    depends_on: {db: {condition: service_healthy}}
+
+volumes:
+  pgdata:
